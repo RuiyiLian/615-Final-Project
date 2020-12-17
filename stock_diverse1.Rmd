@@ -1,0 +1,152 @@
+---
+title: "stock portfolio analysis"
+author: "Ruiyi Lian"
+date: "7/24/2020"
+runtime: shiny
+output: html_document
+
+
+After scanning all stock charts from Jan 2020 to July 2020,I selected three stocks to invest diversely.First of all, I draw the candlestick plot for three stock charts. Then, I set the proportion of three stock to invest cash, and observe the revenue in each month after July 2020.
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(bizdays)
+library(tidyquant)
+library(shiny)
+library(scales)
+library(data.table)
+library(dplyr)
+library(quantmod)
+library(shinydashboard)
+
+load("data.RData")
+stock <- c("GOOG","GSPC","SPDN")
+
+GOOG_information <- data.frame(symbol="GOOG",date=index(GOOG),coredata(GOOG))
+colnames(GOOG_information) <- c("symbol","date","Open","High","Low","Close","Volume","Adjusted")
+GSPC_information <- data.frame(symbol="GSPC",date=index(GSPC),coredata(GSPC))
+colnames(GSPC_information) <- c("symbol","date","Open","High","Low","Close","Volume","Adjusted")
+SPDN_information <- data.frame(symbol="SPDN",date=index(SPDN),coredata(SPDN))
+colnames(SPDN_information) <- c("symbol","date","Open","High","Low","Close","Volume","Adjusted")
+
+stock_information <- rbind(GOOG_information,GSPC_information,SPDN_information)
+```
+
+
+
+```{r eruptions, echo=FALSE}
+shinyApp(
+ui = dashboardPage(
+  dashboardHeader(title = ""),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("daily index", tabName = "chart1", icon = icon("dashboard")),
+      menuItem("porfolio analysis", tabName = "chart2", icon = icon("dashboard"))
+    )),
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "chart1",
+              fluidRow(
+                radioButtons("stock","please choose which stock:",stock),
+                sliderInput("date","please choose date range:",min = as.Date("2020-07-01"),max=as.Date("2020-12-01"),value = c(as.Date("2020-07-01"),as.Date("2020-12-01"))),
+              plotOutput("plot_1"))),
+                
+      tabItem(tabName = "chart2",
+              fluidRow(
+                sliderInput("GOOG_bin",
+                            "Please choose your proportion for GOOG:",
+                            min = 0, max=1, value = 0.01
+                ),
+                sliderInput("GSPC_bin",
+                            "Please choose your proportion for GSPC:",
+                            min = 0, max=1, value = 0.01
+                ),
+                sliderInput("SPDN_bin",
+                            "Please choose your proportion for SPDN:",
+                            min = 0, max=1, value = 0.01
+                ),
+                uiOutput("ui_rest"),
+                plotOutput("plot3")
+      
+    ))))),
+server = function(input, output){
+
+  output$plot_1 <- renderPlot({
+    
+    x1 <- filter(stock_information%>%filter(symbol==input$stock),date>=input$date[1] & date<=input$date[2])
+    candk <- ggplot(x1,aes(x = date, y = Close, group = symbol)) +
+      geom_candlestick(aes(open = Open, high = High, low = Low, close = Close)) +
+      geom_ma(ma_fun = SMA, n = 15, color = "darkgreen", size = 1) +
+      labs(title = paste0("Candlestick Chart ",input$stock), 
+           y = "Closing Price", x = "Month") + 
+      facet_wrap(~ symbol, ncol = 2, scale = "free_y") +
+      theme_tq()+
+      theme(plot.title = element_text(hjust = 0.5, size = 20))
+    ggpubr::ggarrange(candk,ncol = 1)
+    
+  })
+  output$ui_rest <- renderUI({
+    weight <- c(input$GOOG_bin,input$GSPC_bin,input$SPDN_bin)
+    textInput("rest",
+              "The proportion left:",
+              if(sum(weight)<=1){ value = 1-(input$GOOG_bin+input$GSPC_bin+input$SPDN_bin)}
+              else{ value = "Warning: Your total proportion exceeds 1"}
+    )
+    
+  })
+  
+  ##plot3
+  output$plot3=renderPlot({
+    money <- 250000
+    weight <- c(input$GOOG_bin,input$GSPC_bin,input$SPDN_bin)
+    if(sum(weight)<=1){
+      stock_return_month <- stock_information %>% 
+        group_by(symbol) %>%
+        tq_transmute(select     = Adjusted, 
+                     mutate_fun = periodReturn, 
+                     period     = "monthly", 
+                     col_rename = "month_return")
+      
+      portfolio_renturn_month <- stock_return_month %>%
+        tq_portfolio(assets_col   = symbol, 
+                     returns_col  = month_return, 
+                     weights      = weight, 
+                     col_rename   = "portfolio_renturn",
+                     wealth.index = TRUE) %>%
+        mutate(portfolio_renturn = portfolio_renturn * money)
+      
+      portfolio_value <- ggplot(portfolio_renturn_month,aes(x = date, y = portfolio_renturn)) +
+        geom_line(size = 2, color = "skyblue") +
+        labs(title = "Portfolio Value",
+             x = "Month", y = "Portfolio Value") +
+        geom_smooth(method = "loess") +
+        geom_text(aes(label = round(portfolio_renturn)),nudge_x=0.1,nudge_y=0.1)+
+        theme_tq() +
+        scale_color_tq() +
+        scale_y_continuous(labels = scales::dollar)+
+        theme(plot.title = element_text(hjust = 0.5, size = 20))
+      
+      ggpubr::ggarrange(portfolio_value,ncol = 1)
+    }else
+    { 
+      df <- data.frame(num1=1,num2=1,zi="Warning: Your total proportion exceeds 1")
+      a <- ggplot(df,aes(x=num1,y=num2))+
+        geom_bar(stat = "identity",alpha=0)+
+        geom_text(aes(label=zi),position = position_stack(.5),size=5,color="red")+
+        labs(x = "Month", y = "Portfolio Value")
+      ggpubr::ggarrange(a,ncol = 1)
+    }
+  })
+  
+},
+options=list(
+    width="120%", height=2400)
+)
+
+
+```
+
+
+
+
